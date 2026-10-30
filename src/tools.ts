@@ -101,4 +101,23 @@ export const agentTools = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "run_terminal_command",
+      description:
+        "Request a one-shot terminal check. The user must approve each run. Only git status, git diff summary, npm test, and npm build are allowed. Commands run in the workspace with a 30-second timeout and limited output. No arbitrary commands or interactive terminal sessions.",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["git_status", "git_diff_summary", "npm_test", "npm_build"],
+            description: "Choose one approved development check. Do not construct shell commands.",
+          },
+        },
+        required: ["action"],
+      },
+    },
+  },
 ] as const;

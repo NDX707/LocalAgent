@@ -10,6 +10,7 @@ This project is cross-platform. The app itself works on Windows, macOS, and Linu
 - Connect to a local llama.cpp server and chat with its currently loaded model.
 - List files, read text files, search text, create files and folders, replace file contents, and append text.
 - Ask for permission before a tool creates or changes a file.
+- Request a small set of terminal checks, with explicit approval before each run.
 - Limit all file tools to one configured workspace folder.
 - Render assistant replies with Markdown and code blocks.
 - Start and stop llama.cpp from the setup panel after selecting its executable and a GGUF model.
@@ -215,6 +216,19 @@ The workspace shown in the lower-left of the app confirms the selected folder. T
 5. To remove a conversation, point at it in the sidebar and choose the trash icon.
 
 The agent may make mistakes. Review the proposed path and contents before allowing a change, and keep normal backups or use version control for important files. There is intentionally no delete-file tool.
+
+## Terminal checks
+
+The agent can request these one-shot checks. **You must approve each command** in the confirmation dialog:
+
+- `git status --short`
+- `git diff --stat`
+- `npm test`
+- `npm run build`
+
+The app uses PowerShell on Windows and Bash on macOS/Linux. Commands start in the configured workspace, have a 30-second timeout, and return at most 24 KB of output. There is no interactive terminal, arbitrary command input, or background-process management tool. Project scripts can start their own child processes; the app cannot manage those, so inspect scripts in projects you do not own before approving them.
+
+This is a fixed command allowlist, not a security sandbox: child commands run with your operating-system user permissions and may access resources outside the workspace. In particular, `npm test` and `npm run build` run scripts defined by the current project's `package.json`. Inspect those scripts and only approve commands for projects you trust. Declining a confirmation prevents that command from running.
 
 ## Common questions
 

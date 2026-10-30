@@ -91,6 +91,16 @@ function toolArguments(call: ToolCall): Record<string, unknown> {
 
 function toolSummary(call: ToolCall): string {
   const args = toolArguments(call);
+  if (call.function.name === "run_terminal_command") {
+    const commands: Record<string, string> = {
+      git_status: "git status --short",
+      git_diff_summary: "git diff --stat",
+      npm_test: "npm test",
+      npm_build: "npm run build",
+    };
+    const action = typeof args.action === "string" ? args.action : "";
+    return `terminal · ${commands[action] ?? "approved check"}`;
+  }
   const path = typeof args.path === "string" ? args.path : "";
   return path ? `${call.function.name} · ${path}` : call.function.name.replaceAll("_", " ");
 }
@@ -232,8 +242,8 @@ export default function App() {
   }
 
   async function runTool(call: ToolCall): Promise<string> {
-    const mutating = ["create_file", "make_directory", "write_file", "append_file"].includes(call.function.name);
-    if (mutating) {
+    const needsApproval = ["create_file", "make_directory", "write_file", "append_file", "run_terminal_command"].includes(call.function.name);
+    if (needsApproval) {
       const approved = await new Promise<boolean>((resolve) => setApproval({ call, resolve }));
       setApproval(null);
       if (!approved) return JSON.stringify({ cancelled: true, message: "The user declined this file change." });
@@ -353,7 +363,15 @@ export default function App() {
   const visibleChats = chats.filter((chat) => chat.title.toLowerCase().includes(search.toLowerCase()));
   const completedSetupCount = ["node", "llama", "model"].filter((item) => setupChecklist.includes(item)).length;
   const approvalArgs = approval ? toolArguments(approval.call) : {};
+  const isTerminalApproval = approval?.call.function.name === "run_terminal_command";
   const approvalPath = typeof approvalArgs.path === "string" ? approvalArgs.path : "(path not provided)";
+  const approvedTerminalCommands: Record<string, string> = {
+    git_status: "git status --short",
+    git_diff_summary: "git diff --stat",
+    npm_test: "npm test",
+    npm_build: "npm run build",
+  };
+  const terminalAction = typeof approvalArgs.action === "string" ? approvalArgs.action : "";
 
   return (
     <div className={`app-shell ${sidebarOpen ? "" : "sidebar-collapsed"}`}>
@@ -493,7 +511,7 @@ export default function App() {
               disabled={!connection.connected || busy}
             />
             <div className="composer-footer">
-              <div className="composer-tools"><span className="tools-indicator"><span className="tiny-dot" /> Tools on</span><span className="tool-count">7 available</span></div>
+              <div className="composer-tools"><span className="tools-indicator"><span className="tiny-dot" /> Tools on</span><span className="tool-count">8 available</span></div>
               <div className="composer-submit-area">
                 <span className="enter-hint">Shift + Enter for a new line</span>
                 <button className="send-button" aria-label="Send message" disabled={!draft.trim() || busy || !connection.connected} onClick={() => void sendMessage()}>
@@ -512,15 +530,30 @@ export default function App() {
             <button className="modal-close" aria-label="Close" onClick={() => decideApproval(false)}><X size={18} /></button>
             <div className="approval-icon"><ShieldCheck size={21} /></div>
             <div className="eyebrow">PERMISSION REQUIRED</div>
-            <h2 id="approval-title">Allow this file change?</h2>
-            <p>Your agent wants to run <strong>{approval.call.function.name.replaceAll("_", " ")}</strong> in your workspace.</p>
-            <div className="approval-file"><FileCode2 size={16} /><span>{approvalPath}</span></div>
-            {typeof approvalArgs.content === "string" && <pre className="approval-preview">{approvalArgs.content.slice(0, 1400)}{approvalArgs.content.length > 1400 ? "\n…" : ""}</pre>}
+            <h2 id="approval-title">{isTerminalApproval ? "Run this terminal check?" : "Allow this file change?"}</h2>
+            <p>{isTerminalApproval
+              ? <>Your agent wants to run an approved command in the <strong>{setupOS} terminal</strong>.</>
+              : <>Your agent wants to run <strong>{approval.call.function.name.replaceAll("_", " ")}</strong> in your workspace.</>}</p>
+            {isTerminalApproval ? (
+              <>
+                <div className="approval-file"><Terminal size={16} /><span>{approvedTerminalCommands[terminalAction] ?? "Unrecognized command"}</span></div>
+                <div className="terminal-approval-details">
+                  <div><strong>Working directory</strong><code>{workspace}</code></div>
+                  <div><strong>Limits</strong><span>One-shot · 30 seconds · 24 KB output · no interactive session</span></div>
+                </div>
+                <div className="terminal-warning"><AlertCircle size={14} /><span>Commands run with your user permissions. The working directory is set to the workspace, but this is not an OS sandbox. Only approve commands you trust.</span></div>
+              </>
+            ) : (
+              <>
+                <div className="approval-file"><FileCode2 size={16} /><span>{approvalPath}</span></div>
+                {typeof approvalArgs.content === "string" && <pre className="approval-preview">{approvalArgs.content.slice(0, 1400)}{approvalArgs.content.length > 1400 ? "\n…" : ""}</pre>}
+              </>
+            )}
             <div className="approval-actions">
               <button className="secondary-button" onClick={() => decideApproval(false)}>No, cancel</button>
               <button className="primary-button" onClick={() => decideApproval(true)}><Check size={15} /> Allow change</button>
             </div>
-            <div className="approval-footnote"><ShieldCheck size={13} /> Only changes files inside your selected workspace.</div>
+            <div className="approval-footnote"><ShieldCheck size={13} />{isTerminalApproval ? "Only fixed, allowlisted checks are available." : "Only changes files inside your selected workspace."}</div>
           </section>
         </div>
       )}

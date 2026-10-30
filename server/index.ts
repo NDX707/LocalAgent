@@ -34,6 +34,14 @@ let modelProcess: ChildProcess | null = null;
 let modelLaunchError = "";
 let modelServerOutput = "";
 const maxToolFileBytes = 1_000_000;
+const terminalActions: Record<string, string> = {
+  git_status: "git status --short",
+  git_diff_summary: "git diff --stat",
+  npm_test: "npm test",
+  npm_build: "npm run build",
+};
+const maxTerminalOutputChars = 24_000;
+const terminalTimeoutMs = 30_000;
 
 app.use(express.json({ limit: "2mb" }));
 
@@ -104,6 +112,57 @@ async function writeChats(chats: ChatRecord[]): Promise<void> {
 function sendError(response: express.Response, error: unknown): void {
   const message = error instanceof Error ? error.message : "An unexpected server error occurred.";
   response.status(400).json({ error: message });
+}
+
+function runTerminalAction(action: string): Promise<{ command: string; exitCode: number | null; timedOut: boolean; truncated: boolean; output: string }> {
+  const command = terminalActions[action];
+  if (!command) throw new Error("That terminal action is not available.");
+
+  const isWindows = process.platform === "win32";
+  const executable = isWindows ? "powershell.exe" : "/bin/bash";
+  const args = isWindows
+    ? ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", `${command}; exit $LASTEXITCODE`]
+    : ["--noprofile", "--norc", "-c", command];
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(executable, args, {
+      cwd: workspaceRoot,
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    let output = "";
+    let truncated = false;
+    let timedOut = false;
+    let settled = false;
+
+    const appendOutput = (chunk: Buffer): void => {
+      const text = chunk.toString("utf8");
+      const available = maxTerminalOutputChars - output.length;
+      if (available > 0) output += text.slice(0, available);
+      if (text.length > available) truncated = true;
+    };
+
+    child.stdout?.on("data", appendOutput);
+    child.stderr?.on("data", appendOutput);
+    child.once("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(new Error(`Could not start the system terminal: ${error.message}`));
+    });
+    child.once("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ command, exitCode: timedOut ? null : code, timedOut, truncated, output });
+    });
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill();
+    }, terminalTimeoutMs);
+  });
 }
 
 app.get("/api/status", async (_request, response) => {
@@ -413,6 +472,11 @@ app.post("/api/tools/execute", async (request, response) => {
         }
         await visit(start);
         result = { matches, truncated: matches.length >= 100 };
+        break;
+      }
+      case "run_terminal_command": {
+        if (typeof args.action !== "string") throw new Error("Choose an approved terminal action.");
+        result = await runTerminalAction(args.action);
         break;
       }
       default:
